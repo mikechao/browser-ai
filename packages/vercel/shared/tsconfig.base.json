@@ -6,9 +6,6 @@
       "DOM",
       "DOM.Iterable"
     ],
-    "types": [
-      "@webgpu/types"
-    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -17,17 +14,10 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "baseUrl": ".",
-    "paths": {
-      "@browser-ai/shared": ["../shared/src/index.ts"],
-      "@browser-ai/shared/testing": ["../shared/src/testing.ts"]
-    }
+    "isolatedModules": true
   },
   "include": [
-    "**/*.ts",
-    "**/*.tsx"
+    "**/*.ts"
   ],
   "exclude": [
     "node_modules",
