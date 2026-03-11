@@ -15,6 +15,8 @@ import {
 } from "@browser-ai/core";
 import z from "zod";
 
+export const DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant";
+
 export const createTools = () => ({
   webSearch: tool({
     description:
@@ -87,6 +89,10 @@ export interface ClientSideChatTransportOptions {
    * @deprecated Use `onContextOverflow` instead.
    */
   onQuotaOverflow?: (event: Event) => void;
+  /**
+   * Optional system prompt to apply when creating the browser AI session.
+   */
+  systemPrompt?: string;
 }
 
 /**
@@ -104,8 +110,11 @@ export class ClientSideChatTransport implements ChatTransport<BrowserAIUIMessage
     this.tools = createTools();
     this.onContextOverflow =
       options.onContextOverflow ?? options.onQuotaOverflow;
+    const systemPrompt = options.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
+
     this.model = browserAI("text", {
       expectedInputs: [{ type: "text" }, { type: "image" }, { type: "audio" }],
+      initialPrompts: [{ role: "system", content: systemPrompt }],
       onContextOverflow: this.onContextOverflow,
     });
   }

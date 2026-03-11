@@ -1,7 +1,10 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { ClientSideChatTransport } from "@/app/(core)/util/client-side-chat-transport";
+import {
+  ClientSideChatTransport,
+  DEFAULT_SYSTEM_PROMPT,
+} from "@/app/(core)/util/client-side-chat-transport";
 import {
   Message,
   MessageAvatar,
@@ -45,6 +48,7 @@ import {
   RefreshCcw,
   Copy,
   X,
+  SquareTerminal,
   CheckIcon,
   XIcon,
 } from "lucide-react";
@@ -74,6 +78,12 @@ import { SiGithub } from "@icons-pack/react-simple-icons";
 import Link from "next/link";
 import { BrowserSupportInstructions } from "@/components/browser-support-instructions";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const doesBrowserSupportModel = doesBrowserSupportBrowserAI();
 
@@ -86,6 +96,11 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileList | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [systemPromptDraft, setSystemPromptDraft] = useState(
+    DEFAULT_SYSTEM_PROMPT,
+  );
+  const [systemPromptPanelOpen, setSystemPromptPanelOpen] = useState(false);
   const [quotaOverflow, setQuotaOverflow] = useState(false);
   const [contextUsage, setContextUsage] = useState<number | undefined>(
     undefined,
@@ -99,9 +114,10 @@ export default function Chat() {
       doesBrowserSupportModel
         ? new ClientSideChatTransport({
             onContextOverflow: () => setQuotaOverflow(true),
+            systemPrompt,
           })
         : null,
-    [],
+    [systemPrompt],
   );
   const transport = useMemo(
     () =>
@@ -127,6 +143,7 @@ export default function Chat() {
     stop,
     addToolApprovalResponse,
   } = useChat<BrowserAIUIMessage>({
+    id: systemPrompt,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onError(error) {
@@ -147,6 +164,36 @@ export default function Chat() {
     },
     experimental_throttle: 75,
   });
+
+  const hasSentUserMessage = messages.some(
+    (message) => message.role === "user",
+  );
+
+  useEffect(() => {
+    if (hasSentUserMessage) {
+      setSystemPromptPanelOpen(false);
+    }
+  }, [hasSentUserMessage]);
+
+  const handleSystemPromptPanelOpenChange = (isOpen: boolean) => {
+    if (hasSentUserMessage) {
+      setSystemPromptPanelOpen(false);
+      return;
+    }
+
+    if (isOpen) {
+      setSystemPromptDraft(systemPrompt);
+    }
+
+    setSystemPromptPanelOpen(isOpen);
+  };
+
+  const handleSaveSystemPrompt = () => {
+    const nextSystemPrompt = systemPromptDraft.trim() || DEFAULT_SYSTEM_PROMPT;
+    setSystemPrompt(nextSystemPrompt);
+    setSystemPromptDraft(nextSystemPrompt);
+    setSystemPromptPanelOpen(false);
+  };
 
   const syncInputContext = useCallback(() => {
     if (!clientTransport) return;
@@ -583,6 +630,42 @@ export default function Chat() {
                 <GlobeIcon size={16} />
                 <span>Search</span>
               </PromptInputButton>
+              <DropdownMenu
+                open={systemPromptPanelOpen}
+                onOpenChange={handleSystemPromptPanelOpenChange}
+              >
+                <DropdownMenuTrigger asChild>
+                  <PromptInputButton
+                    disabled={hasSentUserMessage}
+                    aria-expanded={systemPromptPanelOpen}
+                    aria-label="System prompt"
+                  >
+                    <SquareTerminal size={16} />
+                    <span>System Prompt</span>
+                  </PromptInputButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="top"
+                  align="start"
+                  className="w-72 p-3"
+                >
+                  <p className="text-sm font-medium">System Prompt</p>
+                  <Textarea
+                    value={systemPromptDraft}
+                    onChange={(e) => setSystemPromptDraft(e.target.value)}
+                    className="mt-2 min-h-24 text-sm"
+                  />
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleSaveSystemPrompt}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </PromptInputTools>
             <div className="flex items-center gap-2">
               {contextWindow !== undefined && contextWindow > 0 && (
