@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getMultimodalInfo,
+  getMultimodalTypesFromInitialPrompts,
   prependSystemPromptToMessages,
 } from "../src/utils/prompt-utils";
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider";
@@ -118,6 +119,73 @@ describe("prompt-utils", () => {
         hasMultiModalInput: false,
         expectedInputs: undefined,
       });
+    });
+  });
+
+  describe("getMultimodalTypesFromInitialPrompts", () => {
+    it("returns empty set for empty array", () => {
+      expect(getMultimodalTypesFromInitialPrompts([])).toEqual(new Set());
+    });
+
+    it("returns empty set for string content (system prompt)", () => {
+      const prompts = [
+        { role: "system", content: "You are helpful." },
+      ] as LanguageModelMessage[];
+      expect(getMultimodalTypesFromInitialPrompts(prompts)).toEqual(new Set());
+    });
+
+    it("detects image type", () => {
+      const prompts = [
+        {
+          role: "user",
+          content: [
+            { type: "text", value: "Describe this." },
+            { type: "image", value: new Uint8Array([1, 2, 3]) },
+          ],
+        },
+        { role: "assistant", content: "It is a lighthouse." },
+      ] as LanguageModelMessage[];
+      expect(getMultimodalTypesFromInitialPrompts(prompts)).toEqual(
+        new Set(["image"]),
+      );
+    });
+
+    it("detects audio type", () => {
+      const prompts = [
+        {
+          role: "user",
+          content: [{ type: "audio", value: new Uint8Array([4, 5, 6]) }],
+        },
+      ] as LanguageModelMessage[];
+      expect(getMultimodalTypesFromInitialPrompts(prompts)).toEqual(
+        new Set(["audio"]),
+      );
+    });
+
+    it("detects and deduplicates both image and audio", () => {
+      const prompts = [
+        {
+          role: "user",
+          content: [
+            { type: "image", value: new Uint8Array([1]) },
+            { type: "image", value: new Uint8Array([2]) },
+            { type: "audio", value: new Uint8Array([3]) },
+          ],
+        },
+      ] as LanguageModelMessage[];
+      expect(getMultimodalTypesFromInitialPrompts(prompts)).toEqual(
+        new Set(["image", "audio"]),
+      );
+    });
+
+    it("ignores text-only content arrays", () => {
+      const prompts = [
+        {
+          role: "user",
+          content: [{ type: "text", value: "Hello" }],
+        },
+      ] as LanguageModelMessage[];
+      expect(getMultimodalTypesFromInitialPrompts(prompts)).toEqual(new Set());
     });
   });
 

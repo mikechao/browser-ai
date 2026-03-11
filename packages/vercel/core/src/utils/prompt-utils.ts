@@ -40,6 +40,31 @@ export function getMultimodalInfo(prompt: LanguageModelV3Prompt): {
 }
 
 /**
+ * Collect image/audio types declared in Prompt API `initialPrompts` content.
+ *
+ * Prompt API content parts use `type: "image"` and `type: "audio"` directly,
+ * unlike AI SDK file parts which use `type: "file"` with a `mediaType`.
+ * System prompts have string content and are skipped automatically.
+ *
+ * @param initialPrompts - The Prompt API initialPrompts array to inspect
+ * @returns A Set of multimodal type strings found across all prompts
+ */
+export function getMultimodalTypesFromInitialPrompts(
+  initialPrompts: LanguageModelMessage[],
+): Set<"image" | "audio"> {
+  const types = new Set<"image" | "audio">();
+  for (const prompt of initialPrompts) {
+    if (Array.isArray(prompt.content)) {
+      for (const part of prompt.content) {
+        if (part.type === "image") types.add("image");
+        else if (part.type === "audio") types.add("audio");
+      }
+    }
+  }
+  return types;
+}
+
+/**
  * Prepends a system prompt to the first user message in the conversation.
  *
  * This is necessary because the Prompt API doesn't support separate system messages,

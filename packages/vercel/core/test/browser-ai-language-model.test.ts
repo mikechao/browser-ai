@@ -458,6 +458,79 @@ describe("BrowserAIChatLanguageModel", () => {
         }),
       );
     });
+
+    it("should merge constructor expectedInputs with prompt inferred inputs in doGenerate", async () => {
+      mockPrompt.mockResolvedValue("I can process both text and image inputs.");
+
+      const result = await generateText({
+        model: new BrowserAIChatLanguageModel("text", {
+          expectedInputs: [{ type: "text", languages: ["en"] }],
+        }),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Analyze this image" },
+              {
+                type: "file",
+                mediaType: "image/png",
+                data: "SGVsbG8=",
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.text).toBe("I can process both text and image inputs.");
+
+      const createCall = (LanguageModel.create as any).mock.calls[0][0];
+      expect(createCall.expectedInputs).toEqual([
+        { type: "text", languages: ["en"] },
+        { type: "image" },
+      ]);
+    });
+
+    it("should merge constructor expectedInputs with prompt inferred inputs in doStream", async () => {
+      mockPromptStreaming.mockReturnValue(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue("Streaming response");
+            controller.close();
+          },
+        }),
+      );
+
+      const result = await streamText({
+        model: new BrowserAIChatLanguageModel("text", {
+          expectedInputs: [{ type: "audio" }],
+        }),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Analyze this image" },
+              {
+                type: "file",
+                mediaType: "image/jpeg",
+                data: new Uint8Array([1, 2, 3]),
+              },
+            ],
+          },
+        ],
+      });
+
+      let text = "";
+      for await (const chunk of result.textStream) {
+        text += chunk;
+      }
+      expect(text).toBe("Streaming response");
+
+      const createCall = (LanguageModel.create as any).mock.calls[0][0];
+      expect(createCall.expectedInputs).toEqual([
+        { type: "audio" },
+        { type: "image" },
+      ]);
+    });
   });
 
   describe("tool support", () => {
@@ -523,6 +596,272 @@ Running the tool now.`);
       expect(firstUserMessage.role).toBe("user");
       expect(firstUserMessage.content[0].value).toBe(
         "What is the weather in Seattle?",
+      );
+    });
+
+    it("should preserve constructor initialPrompts system prompt when tools are used in doGenerate", async () => {
+      mockPrompt.mockResolvedValue(
+        '```tool_call\n{"name": "getWeather", "arguments": {"location": "Seattle"}}\n```',
+      );
+
+      const model = new BrowserAIChatLanguageModel("text", {
+        initialPrompts: [{ role: "system", content: "Talk like a pirate" }],
+      });
+
+      await model.doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Weather in Seattle?" }],
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            name: "getWeather",
+            description: "Get the weather in a location.",
+            inputSchema: {
+              type: "object",
+              properties: { location: { type: "string" } },
+              required: ["location"],
+            },
+          },
+        ],
+      });
+
+      const createCall = (globalThis as any).LanguageModel.create.mock
+        .calls[0][0];
+      expect(createCall.initialPrompts[0].role).toBe("system");
+      expect(createCall.initialPrompts[0].content).toContain(
+        "Talk like a pirate",
+      );
+      expect(createCall.initialPrompts[0].content).toContain("getWeather");
+      expect(createCall.initialPrompts[0].content).toContain("```tool_call");
+    });
+
+    it("should preserve constructor initialPrompts system prompt when tools are used in doStream", async () => {
+      mockPromptStreaming.mockReturnValue(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue(
+              '```tool_call\n{"name": "getWeather", "arguments": {"location": "Seattle"}}\n```',
+            );
+            controller.close();
+          },
+        }),
+      );
+
+      const model = new BrowserAIChatLanguageModel("text", {
+        initialPrompts: [{ role: "system", content: "Talk like a pirate" }],
+      });
+
+      const { stream } = await model.doStream({
+        prompt: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Weather in Seattle?" }],
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            name: "getWeather",
+            description: "Get the weather in a location.",
+            inputSchema: {
+              type: "object",
+              properties: { location: { type: "string" } },
+              required: ["location"],
+            },
+          },
+        ],
+      });
+
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        /* drain */
+      }
+
+      const createCall = (globalThis as any).LanguageModel.create.mock
+        .calls[0][0];
+      expect(createCall.initialPrompts[0].role).toBe("system");
+      expect(createCall.initialPrompts[0].content).toContain(
+        "Talk like a pirate",
+      );
+      expect(createCall.initialPrompts[0].content).toContain("getWeather");
+      expect(createCall.initialPrompts[0].content).toContain("```tool_call");
+    });
+
+    it("should include expectedInputs for preserved multimodal initialPrompts when tools are used in doGenerate", async () => {
+      // Simulate the Prompt API validation: image content in initialPrompts
+      // requires { type: "image" } in expectedInputs.
+      (globalThis as any).LanguageModel.create = vi
+        .fn()
+        .mockImplementation((options: any) => {
+          const hasImagePrompt = (options.initialPrompts ?? []).some(
+            (p: any) =>
+              Array.isArray(p.content) &&
+              p.content.some((c: any) => c.type === "image"),
+          );
+          const declaresImage = (options.expectedInputs ?? []).some(
+            (e: any) => e.type === "image",
+          );
+          if (hasImagePrompt && !declaresImage) {
+            return Promise.reject(
+              new Error(
+                "Image not supported. Session is not initialized with image support.",
+              ),
+            );
+          }
+          return Promise.resolve(mockSession);
+        });
+
+      mockPrompt.mockResolvedValue(
+        '{"tool_call":{"name":"getWeather","arguments":{"location":"Seattle"}}}',
+      );
+
+      const model = new BrowserAIChatLanguageModel("text", {
+        initialPrompts: [
+          {
+            role: "user",
+            content: [
+              { type: "text", value: "Describe this sample image." },
+              { type: "image", value: new Uint8Array([1, 2, 3]) },
+            ],
+          },
+          {
+            role: "assistant",
+            content: "It is a lighthouse.",
+          },
+        ],
+      });
+
+      await model.doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is the weather in Seattle?" },
+            ],
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            name: "getWeather",
+            description: "Get the weather in a location.",
+            inputSchema: {
+              type: "object",
+              properties: { location: { type: "string" } },
+              required: ["location"],
+            },
+          },
+        ],
+      });
+
+      const createCall = (globalThis as any).LanguageModel.create.mock
+        .calls[0][0];
+      // Preserved user/assistant few-shot pair must be present
+      expect(
+        createCall.initialPrompts.some(
+          (p: any) =>
+            p.role === "user" &&
+            Array.isArray(p.content) &&
+            p.content.some((c: any) => c.type === "image"),
+        ),
+      ).toBe(true);
+      // expectedInputs must include image so LanguageModel.create does not throw
+      expect(createCall.expectedInputs).toEqual(
+        expect.arrayContaining([{ type: "image" }]),
+      );
+    });
+
+    it("should include expectedInputs for preserved multimodal initialPrompts when tools are used in doStream", async () => {
+      (globalThis as any).LanguageModel.create = vi
+        .fn()
+        .mockImplementation((options: any) => {
+          const hasImagePrompt = (options.initialPrompts ?? []).some(
+            (p: any) =>
+              Array.isArray(p.content) &&
+              p.content.some((c: any) => c.type === "image"),
+          );
+          const declaresImage = (options.expectedInputs ?? []).some(
+            (e: any) => e.type === "image",
+          );
+          if (hasImagePrompt && !declaresImage) {
+            return Promise.reject(
+              new Error(
+                "Image not supported. Session is not initialized with image support.",
+              ),
+            );
+          }
+          return Promise.resolve(mockSession);
+        });
+
+      mockPromptStreaming.mockReturnValue(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue("The weather is sunny.");
+            controller.close();
+          },
+        }),
+      );
+
+      const model = new BrowserAIChatLanguageModel("text", {
+        initialPrompts: [
+          {
+            role: "user",
+            content: [
+              { type: "text", value: "Describe this sample image." },
+              { type: "image", value: new Uint8Array([1, 2, 3]) },
+            ],
+          },
+          {
+            role: "assistant",
+            content: "It is a lighthouse.",
+          },
+        ],
+      });
+
+      const { stream } = await model.doStream({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is the weather in Seattle?" },
+            ],
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            name: "getWeather",
+            description: "Get the weather in a location.",
+            inputSchema: {
+              type: "object",
+              properties: { location: { type: "string" } },
+              required: ["location"],
+            },
+          },
+        ],
+      });
+
+      const reader = stream.getReader();
+      while (!(await reader.read()).done) {
+        /* drain */
+      }
+
+      const createCall = (globalThis as any).LanguageModel.create.mock
+        .calls[0][0];
+      expect(
+        createCall.initialPrompts.some(
+          (p: any) =>
+            p.role === "user" &&
+            Array.isArray(p.content) &&
+            p.content.some((c: any) => c.type === "image"),
+        ),
+      ).toBe(true);
+      expect(createCall.expectedInputs).toEqual(
+        expect.arrayContaining([{ type: "image" }]),
       );
     });
 

@@ -182,6 +182,146 @@ describe("SessionManager", () => {
       });
     });
 
+    it("should preserve base expectedInputs when runtime expectedInputs are not provided", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        expectedInputs: [{ type: "image" }],
+      });
+      await manager.getSession({});
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        expectedInputs: [{ type: "image" }],
+      });
+    });
+
+    it("should merge runtime expectedInputs with base expectedInputs", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        expectedInputs: [{ type: "image" }],
+      });
+      await manager.getSession({
+        expectedInputs: [{ type: "audio" }],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        expectedInputs: [{ type: "image" }, { type: "audio" }],
+      });
+    });
+
+    it("should merge metadata for duplicate expectedInputs types", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        expectedInputs: [{ type: "text", languages: ["en", "da"] }],
+      });
+      await manager.getSession({
+        expectedInputs: [{ type: "text", languages: ["en", "fr"] }],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        expectedInputs: [{ type: "text", languages: ["en", "da", "fr"] }],
+      });
+    });
+
+    it("should treat empty runtime expectedInputs as no-op", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        expectedInputs: [{ type: "audio" }],
+      });
+      await manager.getSession({
+        expectedInputs: [],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        expectedInputs: [{ type: "audio" }],
+      });
+    });
+
+    it("should merge base, runtime, and initialPrompts inferred expectedInputs", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        expectedInputs: [{ type: "text" }],
+        initialPrompts: [
+          {
+            role: "user",
+            content: [
+              { type: "text", value: "Describe this audio" },
+              { type: "audio", value: new Uint8Array([1, 2, 3]) },
+            ],
+          },
+        ],
+      });
+      await manager.getSession({
+        expectedInputs: [{ type: "image" }],
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        expectedInputs: [
+          { type: "text" },
+          { type: "image" },
+          { type: "audio" },
+        ],
+        initialPrompts: [
+          {
+            role: "user",
+            content: [
+              { type: "text", value: "Describe this audio" },
+              { type: "audio", value: new Uint8Array([1, 2, 3]) },
+            ],
+          },
+        ],
+      });
+    });
+
     it("should handle download progress callback", async () => {
       const progressCallback: DownloadProgressCallback = vi.fn();
       const mockCreate = vi.fn().mockResolvedValue({
@@ -203,6 +343,139 @@ describe("SessionManager", () => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
       const createArgs = mockCreate.mock.calls[0][0];
       expect(createArgs.monitor).toBeInstanceOf(Function);
+    });
+
+    it("should preserve structured system initialPrompts content when merging runtime systemMessage", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        initialPrompts: [
+          {
+            role: "system",
+            content: [{ type: "text", value: "Talk like a pirate" }],
+          },
+        ],
+      });
+      await manager.getSession({
+        systemMessage: "Tool calling instructions",
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        initialPrompts: [
+          {
+            role: "system",
+            content: [
+              { type: "text", value: "Talk like a pirate" },
+              { type: "text", value: "\n\nTool calling instructions" },
+            ],
+          },
+        ],
+      });
+    });
+
+    it("should merge constructor initialPrompts system entry with runtime systemMessage", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        initialPrompts: [{ role: "system", content: "Talk like a pirate" }],
+      });
+      await manager.getSession({
+        systemMessage: "Tool calling instructions",
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        initialPrompts: [
+          {
+            role: "system",
+            content: "Talk like a pirate\n\nTool calling instructions",
+          },
+        ],
+      });
+    });
+
+    it("should preserve non-system initialPrompts entries alongside merged system entry", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        initialPrompts: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: "What is the capital of Italy?" },
+          { role: "assistant", content: "The capital of Italy is Rome." },
+        ],
+      });
+      await manager.getSession({
+        systemMessage: "Tool calling instructions",
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        initialPrompts: [
+          {
+            role: "system",
+            content:
+              "You are a helpful assistant.\n\nTool calling instructions",
+          },
+          { role: "user", content: "What is the capital of Italy?" },
+          { role: "assistant", content: "The capital of Italy is Rome." },
+        ],
+      });
+    });
+
+    it("should preserve non-system initialPrompts entries when there is no existing system entry", async () => {
+      const mockCreate = vi.fn().mockResolvedValue({
+        prompt: vi.fn(),
+        destroy: vi.fn(),
+        addEventListener: vi.fn(),
+      });
+
+      vi.stubGlobal("LanguageModel", {
+        availability: vi.fn().mockResolvedValue("available"),
+        create: mockCreate,
+      });
+
+      const manager = new SessionManager({
+        initialPrompts: [
+          { role: "user", content: "What is the capital of Italy?" },
+          { role: "assistant", content: "The capital of Italy is Rome." },
+        ],
+      });
+      await manager.getSession({
+        systemMessage: "Tool calling instructions",
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        initialPrompts: [
+          { role: "system", content: "Tool calling instructions" },
+          { role: "user", content: "What is the capital of Italy?" },
+          { role: "assistant", content: "The capital of Italy is Rome." },
+        ],
+      });
     });
 
     it("should merge base options with request options", async () => {

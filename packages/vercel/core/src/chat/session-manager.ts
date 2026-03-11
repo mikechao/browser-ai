@@ -5,6 +5,7 @@
 
 import { LoadSettingError } from "@ai-sdk/provider";
 import type { DownloadProgressCallback } from "@browser-ai/shared";
+import { getMultimodalTypesFromInitialPrompts } from "../utils/prompt-utils";
 
 /**
  * Custom provider options that extend the standard API
@@ -27,9 +28,13 @@ interface CustomProviderOptions {
 export interface SessionCreateOptions
   extends LanguageModelCreateOptions, CustomProviderOptions {
   systemMessage?: string;
-  expectedInputs?: Array<{ type: "text" | "image" | "audio" }>;
+  expectedInputs?: SessionExpectedInput[];
   onDownloadProgress?: DownloadProgressCallback;
 }
+
+type SessionExpectedInput = NonNullable<
+  LanguageModelCreateOptions["expectedInputs"]
+>[number];
 
 /**
  * Manages browser AI session lifecycle
@@ -264,7 +269,6 @@ export class SessionManager {
     // Start with base options
     const mergedOptions: LanguageModelCreateOptions &
       Partial<CustomProviderOptions> = { ...this.baseOptions };
-
     // Merge in request-specific options if provided
     if (options) {
       const {
@@ -275,20 +279,55 @@ export class SessionManager {
         onQuotaOverflow: _onQuotaOverflow,
         ...createOptions
       } = options;
-
       // Merge standard create options
       Object.assign(mergedOptions, createOptions);
 
-      // Handle system message
+      // Handle system message: merge with any existing system entry and
+      // preserve all non-system entries (e.g. few-shot examples).
       if (systemMessage) {
+        const existingPrompts = mergedOptions.initialPrompts ?? [];
+        const existingSystem = existingPrompts.find((p) => p.role === "system");
+        const otherPrompts = existingPrompts.filter(
+          (p) => p.role !== "system",
+        ) as LanguageModelMessage[];
+        const mergedContent = existingSystem
+          ? typeof existingSystem.content === "string"
+            ? `${existingSystem.content}\n\n${systemMessage}`
+            : [
+                ...existingSystem.content,
+                { type: "text" as const, value: `\n\n${systemMessage}` },
+              ]
+          : systemMessage;
         mergedOptions.initialPrompts = [
-          { role: "system", content: systemMessage },
+          { role: "system", content: mergedContent },
+          ...otherPrompts,
         ];
       }
 
       // Handle expected inputs (for multimodal)
       if (expectedInputs && expectedInputs.length > 0) {
-        mergedOptions.expectedInputs = expectedInputs;
+        mergedOptions.expectedInputs = this.mergeExpectedInputs(
+          mergedOptions.expectedInputs,
+          expectedInputs,
+        );
+      }
+
+      // Union multimodal types from any preserved initialPrompts into
+      // expectedInputs. The Prompt API rejects image/audio content parts
+      // that are not declared in expectedInputs.
+      if (mergedOptions.initialPrompts) {
+        const promptTypes = getMultimodalTypesFromInitialPrompts(
+          mergedOptions.initialPrompts as LanguageModelMessage[],
+        );
+        if (promptTypes.size > 0) {
+          const inferredInputs = Array.from(promptTypes).map((t) => ({
+            type: t as "image" | "audio",
+          }));
+          mergedOptions.expectedInputs = this.mergeExpectedInputs(
+            mergedOptions.expectedInputs,
+            inferredInputs,
+          );
+        }
       }
 
       // Handle download progress monitoring
@@ -302,5 +341,56 @@ export class SessionManager {
     }
 
     return mergedOptions;
+  }
+
+  private mergeExpectedInputs(
+    baseInputs: LanguageModelCreateOptions["expectedInputs"],
+    incomingInputs: LanguageModelCreateOptions["expectedInputs"],
+  ): LanguageModelCreateOptions["expectedInputs"] {
+    if (!incomingInputs || incomingInputs.length === 0) {
+      return baseInputs;
+    }
+
+    const mergedByType = new Map<
+      SessionExpectedInput["type"],
+      SessionExpectedInput
+    >();
+
+    for (const input of baseInputs ?? []) {
+      mergedByType.set(input.type, input);
+    }
+
+    for (const input of incomingInputs) {
+      const existing = mergedByType.get(input.type);
+      if (!existing) {
+        mergedByType.set(input.type, input);
+        continue;
+      }
+
+      mergedByType.set(input.type, this.mergeExpectedInput(existing, input));
+    }
+
+    return Array.from(mergedByType.values());
+  }
+
+  private mergeExpectedInput(
+    baseInput: SessionExpectedInput,
+    incomingInput: SessionExpectedInput,
+  ): SessionExpectedInput {
+    const merged: SessionExpectedInput = {
+      ...baseInput,
+      ...incomingInput,
+    };
+
+    if (baseInput.languages || incomingInput.languages) {
+      merged.languages = [
+        ...new Set([
+          ...(baseInput.languages ?? []),
+          ...(incomingInput.languages ?? []),
+        ]),
+      ];
+    }
+
+    return merged;
   }
 }
